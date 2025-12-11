@@ -17,24 +17,31 @@ print("=" * 60)
 # Try to get model from local variables (if running after notebook)
 try:
     # Check if model exists in current scope
-    if 'model' in dir():
+    if 'model' in globals():
         print("✓ Found 'model' in scope")
         model.save("saved_model/toxic_lstm.h5")
         print("✓ Model saved to saved_model/toxic_lstm.h5")
     else:
         print("❌ 'model' not found. Please run your training notebook first.")
+        print("   Note: This script is meant to be run after training in a notebook.")
+        print("   Alternatively, use train_model.py to train and save the model.")
+except NameError:
+    print("❌ 'model' not found. Please run your training notebook first.")
 except Exception as e:
     print(f"❌ Error saving model: {e}")
 
 # Try to get tokenizer from local variables
 try:
-    if 'tokenizer' in dir():
+    if 'tokenizer' in globals():
         print("✓ Found 'tokenizer' in scope")
         with open("saved_model/tokenizer.pkl", "wb") as f:
             pickle.dump(tokenizer, f)
         print("✓ Tokenizer saved to saved_model/tokenizer.pkl")
     else:
         print("❌ 'tokenizer' not found. Please run your training notebook first.")
+        print("   Note: This script is meant to be run after training in a notebook.")
+except NameError:
+    print("❌ 'tokenizer' not found. Please run your training notebook first.")
 except Exception as e:
     print(f"❌ Error saving tokenizer: {e}")
 

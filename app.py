@@ -7,7 +7,8 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 import re
 import pickle
 import os
-from pathlib import Path
+from io import StringIO
+import sys
 
 # Set page configuration
 st.set_page_config(
@@ -48,9 +49,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def _get_file_mtime(path):
+    """Get file modification time for cache invalidation"""
+    try:
+        return os.path.getmtime(path) if os.path.exists(path) else 0
+    except:
+        return 0
+
 @st.cache_resource
-def load_model_and_tokenizer():
-    """Load the trained model and tokenizer"""
+def load_model_and_tokenizer(_model_mtime, _tokenizer_mtime):
+    """Load the trained model and tokenizer
+    
+    Args:
+        _model_mtime: Model file modification time (for cache invalidation)
+        _tokenizer_mtime: Tokenizer file modification time (for cache invalidation)
+    """
     try:
         # Try multiple possible paths for the model
         possible_model_paths = [
@@ -84,8 +97,10 @@ def load_model_and_tokenizer():
         ]
         
         tokenizer = None
+        tokenizer_path = None
         for path in possible_tokenizer_paths:
             if os.path.exists(path):
+                tokenizer_path = path
                 with open(path, 'rb') as f:
                     tokenizer = pickle.load(f)
                 break
@@ -94,6 +109,7 @@ def load_model_and_tokenizer():
             st.warning("⚠️ Tokenizer not found. Model may not work correctly.")
             return model, None
         
+        st.success(f"✓ Tokenizer loaded from: {tokenizer_path}")
         return model, tokenizer
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
@@ -169,15 +185,26 @@ with st.sidebar:
         help="Adjust the threshold for flagging toxicity"
     )
 
+# Load model with error handling
+# Use file modification times to invalidate cache when files change
+try:
+    model_mtime = _get_file_mtime("saved_model/toxic_lstm.h5")
+    tokenizer_mtime = _get_file_mtime("saved_model/tokenizer.pkl")
+    
+    with st.spinner("Loading model..."):
+        model, tokenizer = load_model_and_tokenizer(model_mtime, tokenizer_mtime)
+except Exception as e:
+    st.error(f"Error during model loading: {e}")
+    import traceback
+    st.error(traceback.format_exc())
+    model, tokenizer = None, None
+
 # Main content area
 tabs = st.tabs(["🔍 Detect", "📊 Batch Analysis", "ℹ️ Information"])
 
 # Tab 1: Single Comment Detection
 with tabs[0]:
     st.header("Single Comment Analysis")
-    
-    # Load model
-    model, tokenizer = load_model_and_tokenizer()
     
     if model is not None and tokenizer is not None:
         # Input area
@@ -265,6 +292,17 @@ with tabs[0]:
                 with st.expander("View Cleaned Text"):
                     cleaned = clean_text(user_input)
                     st.code(cleaned, language="text")
+    elif model is not None and tokenizer is None:
+        st.warning("⚠️ Tokenizer file not found. The model is loaded but cannot process text without the tokenizer.")
+        st.info("""
+        **To fix this:**
+        1. Make sure `saved_model/tokenizer.pkl` exists
+        2. If missing, you need to retrain the model:
+           ```bash
+           python train_model.py
+           ```
+        """)
+        st.info("The tokenizer is required to convert text into the format the model understands.")
     else:
         st.error("⚠️ Model not loaded. Please ensure the model file exists at 'saved_model/toxic_lstm.h5'")
         st.info("You can train the model using the training script provided in the project.")
@@ -273,7 +311,7 @@ with tabs[0]:
 with tabs[1]:
     st.header("Batch Analysis")
     
-    model, tokenizer = load_model_and_tokenizer()
+    # Model already loaded above, reuse it
     
     if model is not None and tokenizer is not None:
         uploaded_file = st.file_uploader(
@@ -305,6 +343,9 @@ with tabs[1]:
                             pred = predict_toxicity(comment, model, tokenizer)
                             if pred is not None:
                                 predictions_list.append(pred)
+                            else:
+                                # If prediction fails, use zeros as default
+                                predictions_list.append(np.zeros(6))
                             progress_bar.progress((idx + 1) / len(df))
                         
                         # Add predictions to dataframe
@@ -351,6 +392,9 @@ with tabs[1]:
             
             except Exception as e:
                 st.error(f"Error processing file: {e}")
+    elif model is not None and tokenizer is None:
+        st.warning("⚠️ Tokenizer file not found. Batch analysis requires the tokenizer to process comments.")
+        st.info("Please ensure `saved_model/tokenizer.pkl` exists. Run `python train_model.py` if it's missing.")
     else:
         st.error("⚠️ Model not loaded. Please ensure the model file exists.")
 
@@ -406,11 +450,16 @@ with tabs[2]:
     
     st.markdown("---")
     
-    # Model details if loaded
-    model, _ = load_model_and_tokenizer()
+    # Model details if loaded (reuse already loaded model)
     if model is not None:
         st.markdown("### Model Summary")
-        st.code(str(model.summary()), language="text")
+        # Capture model summary output
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
+        model.summary()
+        sys.stdout = old_stdout
+        summary_str = buffer.getvalue()
+        st.code(summary_str, language="text")
 
 # Footer
 st.markdown("---")
